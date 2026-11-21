@@ -1,0 +1,188 @@
+name: Fork Release
+
+on:
+  push:
+    tags:
+      - 'v*-[0-9]+'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: fork-release
+  cancel-in-progress: false
+
+jobs:
+  build:
+    name: Build APK and F-Droid repo
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    permissions:
+      contents: write
+      pages: read
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5.0.1
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+
+      - name: Derive version from tag
+        id: version
+        env:
+          TAG: ${{ github.ref_name }}
+        run: |
+          upstream_base="${TAG%-*}"
+          fork_counter="${TAG##*-}"
+          if ! [[ "$fork_counter" =~ ^[1-9][0-9]*$ ]]; then
+            echo "::error::Tag $TAG must end in -<fork counter>"
+            exit 1
+          fi
+
+          nearest_upstream_tag="$(git describe --tags --abbrev=0 --exclude 'v*-[0-9]' --exclude 'v*-[0-9][0-9]' HEAD)"
+          if [ "$nearest_upstream_tag" != "$upstream_base" ]; then
+            echo "::error::Tag $TAG claims upstream $upstream_base, but HEAD is based on $nearest_upstream_tag"
+            exit 1
+          fi
+
+          # Seconds since 2020-01-01 UTC, like upstream's builds: always increasing, so every release is an update
+          version_code="$(( $(date -u +%s) - 1577836800 ))"
+          {
+            echo "name=${TAG#v}"
+            echo "code=$version_code"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Set up Java
+        uses: actions/setup-java@be666c2fcd27ec809703dec50e508c2fdc7f6654 # v5.2.0
+        with:
+          distribution: 'temurin'
+          java-version: '17'
+
+      - name: Set up Flutter
+        uses: subosito/flutter-action@1a449444c387b1966244ae4d4f8c696479add0b2 # v2.23.0
+        with:
+          flutter-version: '3.32.4'
+          channel: 'stable'
+          cache: true
+
+      - name: Get dependencies
+        working-directory: mobile
+        run: flutter pub get
+
+      - name: Copy Sure icons from public/
+        run: cp public/android-chrome-512x512.png mobile/assets/icon/app_icon.png
+
+      - name: Generate app icons
+        working-directory: mobile
+        run: flutter pub run flutter_launcher_icons
+
+      - name: Analyze code
+        working-directory: mobile
+        run: flutter analyze --no-fatal-infos
+
+      - name: Run tests
+        working-directory: mobile
+        run: flutter test
+
+      - name: Set up APK signing key
+        env:
+          KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}
+          KEY_STORE_PASSWORD: ${{ secrets.KEY_STORE_PASSWORD }}
+          KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
+        run: |
+          if [ -z "$KEYSTORE_BASE64" ]; then
+            echo "::error::KEYSTORE_BASE64 is not set; refusing to publish an unsigned APK"
+            exit 1
+          fi
+          echo "$KEYSTORE_BASE64" | base64 -d > mobile/android/app/upload-keystore.jks
+          {
+            echo "storePassword=$KEY_STORE_PASSWORD"
+            echo "keyPassword=$KEY_PASSWORD"
+            echo "keyAlias=$KEY_ALIAS"
+            echo "storeFile=upload-keystore.jks"
+          } > mobile/android/key.properties
+
+      - name: Build APK
+        working-directory: mobile
+        env:
+          VERSION_NAME: ${{ steps.version.outputs.name }}
+          VERSION_CODE: ${{ steps.version.outputs.code }}
+        run: |
+          flutter build apk --release \
+            --target-platform android-arm64 \
+            --build-name "$VERSION_NAME" \
+            --build-number "$VERSION_CODE"
+          rm -f android/key.properties android/app/upload-keystore.jks
+          mkdir -p "$GITHUB_WORKSPACE/site/repo"
+          cp build/app/outputs/flutter-apk/app-release.apk "$GITHUB_WORKSPACE/site/repo/sure-$VERSION_NAME.apk"
+
+      - name: Publish GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.ref_name }}
+          VERSION_NAME: ${{ steps.version.outputs.name }}
+        run: |
+          gh release create "$TAG" "site/repo/sure-$VERSION_NAME.apk" \
+            --repo "$GITHUB_REPOSITORY" \
+            --title "$TAG" \
+            --notes "Fork build based on upstream ${TAG%-*}." \
+            --latest
+
+      - name: Configure Pages
+        id: pages
+        uses: actions/configure-pages@45bfe0192ca1faeb007ade9deae92b16b8254a0d # v6.0.0
+
+      - name: Build F-Droid repo
+        working-directory: site
+        env:
+          FDROID_KEYSTORE_BASE64: ${{ secrets.FDROID_KEYSTORE_BASE64 }}
+          FDROID_KEYSTORE_PASSWORD: ${{ secrets.FDROID_KEYSTORE_PASSWORD }}
+          FDROID_KEY_ALIAS: ${{ secrets.FDROID_KEY_ALIAS }}
+          PAGES_BASE_URL: ${{ steps.pages.outputs.base_url }}
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends fdroidserver
+
+          echo "$FDROID_KEYSTORE_BASE64" | base64 -d > keystore.p12
+          cat > config.yml <<EOF
+          sdk_path: $ANDROID_HOME
+          repo_url: $PAGES_BASE_URL/repo
+          repo_name: Sure (fork)
+          repo_description: Sure mobile, fork builds from $GITHUB_REPOSITORY
+          archive_older: 0
+          repo_keyalias: $FDROID_KEY_ALIAS
+          keystore: keystore.p12
+          keystorepass: {env: FDROID_KEYSTORE_PASSWORD}
+          keypass: {env: FDROID_KEYSTORE_PASSWORD}
+          keydname: CN=$GITHUB_REPOSITORY_OWNER, OU=F-Droid
+          EOF
+          chmod 600 config.yml keystore.p12
+
+          fdroid update --create-metadata --use-date-from-apk
+
+          # site/ is published as-is, so nothing secret may stay in it
+          rm -rf config.yml keystore.p12 metadata srclibs tmp
+
+      - name: Upload Pages artifact
+        uses: actions/upload-pages-artifact@fc324d3547104276b827a68afc52ff2a11cc49c9 # v5.0.0
+        with:
+          path: site
+
+  deploy:
+    name: Publish F-Droid repo
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+
+    steps:
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@368f82528645a54fb793d4d04e342629a3f51346 # v5.0.1
