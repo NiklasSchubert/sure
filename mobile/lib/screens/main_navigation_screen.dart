@@ -4,6 +4,9 @@ import 'package:provider/provider.dart';
 import '../providers/auth_provider.dart';
 import '../providers/privacy_provider.dart';
 import '../widgets/sure_logo.dart';
+import '../fork/fork_strings.dart';
+import '../fork/transactions_tab_screen.dart';
+import 'budgets_screen.dart';
 import 'chat_list_screen.dart';
 import 'dashboard_screen.dart';
 import 'intro_screen.dart';
@@ -26,17 +29,16 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
     final screens = <Widget>[];
 
     if (!introLayout) {
+      // fork: Cashew-style tabs; the assistant moves into More
       screens.add(DashboardScreen(key: _dashboardKey));
+      screens.add(const TransactionsTabScreen());
+      screens.add(const BudgetsScreen());
+      screens.add(MoreScreen(onOpenAssistant: _openAssistant));
     }
 
     if (introLayout) {
       screens.add(IntroScreen(onStartChat: onStartChat));
-    }
-
-    screens.add(const ChatListScreen());
-
-    if (!introLayout) {
-      screens.add(const MoreScreen());
+      screens.add(const ChatListScreen());
     }
 
     screens.add(const SettingsScreen());
@@ -51,7 +53,7 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
   ) async {
     const chatIndex = 1;
 
-    if (index == chatIndex && !authProvider.aiEnabled) {
+    if (introLayout && index == chatIndex && !authProvider.aiEnabled) {
       final enabled = await _showEnableAiPrompt();
       if (!enabled) {
         return;
@@ -70,7 +72,7 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
   }
 
   Future<void> _handleSelectSettings(AuthProvider authProvider, bool introLayout) async {
-    final settingsIndex = introLayout ? 2 : 3;
+    final settingsIndex = introLayout ? 2 : 4;
     await _handleDestinationSelected(settingsIndex, authProvider, introLayout);
   }
 
@@ -95,17 +97,30 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
           label: l.navIntro,
         ),
       );
+      destinations.add(
+        NavigationDestination(
+          icon: const Icon(Icons.chat_bubble_outline),
+          selectedIcon: const Icon(Icons.chat_bubble),
+          label: l.navAssistant,
+        ),
+      );
     }
 
-    destinations.add(
-      NavigationDestination(
-        icon: const Icon(Icons.chat_bubble_outline),
-        selectedIcon: const Icon(Icons.chat_bubble),
-        label: l.navAssistant,
-      ),
-    );
-
     if (!introLayout) {
+      destinations.add(
+        const NavigationDestination(
+          icon: Icon(Icons.receipt_long_outlined),
+          selectedIcon: Icon(Icons.receipt_long),
+          label: ForkStrings.transactionsTab,
+        ),
+      );
+      destinations.add(
+        NavigationDestination(
+          icon: const Icon(Icons.pie_chart_outline),
+          selectedIcon: const Icon(Icons.pie_chart),
+          label: l.moreBudgets,
+        ),
+      );
       destinations.add(
         NavigationDestination(
           icon: const Icon(Icons.more_horiz),
@@ -173,6 +188,17 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
           ),
         ),
       ],
+    );
+  }
+
+  // fork: the assistant is no longer a tab, so More opens it as a page
+  Future<void> _openAssistant() async {
+    final authProvider = context.read<AuthProvider>();
+    if (!authProvider.aiEnabled && !await _showEnableAiPrompt()) return;
+    if (!mounted) return;
+
+    await Navigator.of(context).push(
+      MaterialPageRoute(builder: (_) => const ChatListScreen()),
     );
   }
 

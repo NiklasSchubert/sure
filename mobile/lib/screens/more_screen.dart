@@ -3,12 +3,14 @@ import '../l10n/app_localizations.dart';
 import '../theme/sure_colors.dart';
 import '../theme/sure_tokens.dart';
 import '../widgets/sure_list_group.dart';
-import 'budgets_screen.dart';
+import '../fork/fork_strings.dart';
 import 'calendar_screen.dart';
-import 'recent_transactions_screen.dart';
 
 class MoreScreen extends StatelessWidget {
-  const MoreScreen({super.key});
+  // fork: opening the assistant needs the AI opt-in prompt that lives in the navigation
+  final Future<void> Function()? onOpenAssistant;
+
+  const MoreScreen({super.key, this.onOpenAssistant});
 
   @override
   Widget build(BuildContext context) {
@@ -23,20 +25,14 @@ class MoreScreen extends StatelessWidget {
           children: [
             SureListGroup(
               children: [
-                SureListRow(
-                  leading: _iconBadge(context, Icons.pie_chart_outline),
-                  title: l.moreBudgets,
-                  subtitle: l.moreBudgetsSubtitle,
-                  showChevron: true,
-                  onTap: () {
-                    Navigator.push(
-                      context,
-                      MaterialPageRoute(
-                        builder: (context) => const BudgetsScreen(),
-                      ),
-                    );
-                  },
-                ),
+                if (onOpenAssistant case final openAssistant?)
+                  SureListRow(
+                    leading: _iconBadge(context, Icons.chat_bubble_outline),
+                    title: l.navAssistant,
+                    subtitle: ForkStrings.assistantSubtitle,
+                    showChevron: true,
+                    onTap: openAssistant,
+                  ),
                 SureListRow(
                   leading: _iconBadge(context, Icons.calendar_month),
                   title: l.moreCalendar,
@@ -47,20 +43,6 @@ class MoreScreen extends StatelessWidget {
                       context,
                       MaterialPageRoute(
                         builder: (context) => const CalendarScreen(),
-                      ),
-                    );
-                  },
-                ),
-                SureListRow(
-                  leading: _iconBadge(context, Icons.receipt_long),
-                  title: l.moreRecentTransactions,
-                  subtitle: l.moreRecentTransactionsSubtitle,
-                  showChevron: true,
-                  onTap: () {
-                    Navigator.push(
-                      context,
-                      MaterialPageRoute(
-                        builder: (context) => const RecentTransactionsScreen(),
                       ),
                     );
                   },

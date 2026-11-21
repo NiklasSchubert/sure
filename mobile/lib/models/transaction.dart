@@ -1,3 +1,5 @@
+import '../fork/transaction_meta_store.dart';
+
 class Transaction {
   final String? id;
   final String accountId;
@@ -45,6 +47,9 @@ class Transaction {
             tagsProvided ?? (tagIds.isNotEmpty || tagNames.isNotEmpty);
 
   factory Transaction.fromJson(Map<String, dynamic> json) {
+    // fork: keep the server fields the offline cache does not store
+    TransactionMetaStore.instance.record(json);
+
     // Handle both API formats:
     // 1. New format: {"account": {"id": "xxx", "name": "..."}}
     // 2. Old format: {"account_id": "xxx"}
